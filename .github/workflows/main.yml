@@ -2,8 +2,8 @@ name: Auto Translate News
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Runs every 6 hours automatically
-  workflow_dispatch: # Allows you to run it manually
+    - cron: '0 * * * *' # Runs EVERY HOUR automatically
+  workflow_dispatch:
 
 permissions:
   contents: write
