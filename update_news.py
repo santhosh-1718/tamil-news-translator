@@ -1,8 +1,7 @@
 import feedparser
 import torch
-import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from dateutil import parser
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
@@ -11,26 +10,39 @@ RSS_URLS = [
     "https://tamil.news18.com/commonfeeds/v1/tam/rss/national.xml",
     "https://tamil.oneindia.com/rss/feeds/oneindia-tamil-fb.xml"
 ]
-HOURS_TO_KEEP = 24
-cutoff_time = datetime.now() - timedelta(hours=HOURS_TO_KEEP)
+
+# Set the cutoff exactly to Midnight of TODAY
+today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 new_entries = []
 
-# 2. Fetch News
-print("Fetching news...")
+# Custom Dictionary to fix AI geography mistakes BEFORE translation
+def fix_local_words(text):
+    fixes = {
+        "கோவை": "Coimbatore",
+        "கோயம்புத்தூர்": "Coimbatore",
+        "சென்னை": "Chennai",
+        "மதுரை": "Madurai"
+    }
+    for ta_word, en_word in fixes.items():
+        text = text.replace(ta_word, en_word)
+    return text
+
+# 2. Fetch News (Only from TODAY)
+print("Fetching today's news...")
 for url in RSS_URLS:
     feed = feedparser.parse(url)
     for entry in feed.entries:
         try:
             pub_date = parser.parse(entry.published).replace(tzinfo=None)
-            if pub_date > cutoff_time:
+            if pub_date >= today_start:
                 new_entries.append(entry)
         except:
             pass
 
+# Sort newest to oldest. (The [:10] limit is removed so it gets ALL news!)
 new_entries.sort(key=lambda x: parser.parse(x.published).replace(tzinfo=None), reverse=True)
-new_entries = new_entries[:10] # Limit to 10 for GitHub Action memory limits
 
-# 3. Load Model (CPU mode for GitHub Actions)
+# 3. Load Model
 print("Loading Model...")
 model_name = "facebook/nllb-200-1.3B"
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -40,10 +52,12 @@ tokenizer.src_lang = "tam_Taml"
 translated_news = []
 
 # 4. Translate
-print("Translating...")
+print(f"Translating {len(new_entries)} articles for today...")
 for entry in new_entries:
-    tamil_text = entry.title
-    inputs = tokenizer(tamil_text, return_tensors="pt")
+    # Apply our custom dictionary fix first
+    clean_tamil = fix_local_words(entry.title)
+    
+    inputs = tokenizer(clean_tamil, return_tensors="pt")
     
     with torch.no_grad():
         translated_tokens = model.generate(
@@ -56,7 +70,7 @@ for entry in new_entries:
     
     english_text = tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)[0]
     translated_news.append({
-        "tamil": tamil_text,
+        "tamil": entry.title, # Display the original Tamil text on the website
         "english": english_text,
         "link": entry.link,
         "published": parser.parse(entry.published).strftime("%d %b %Y, %I:%M %p")
@@ -83,7 +97,7 @@ html_content = f"""<!DOCTYPE html>
 <div class="container">
   <div class="header">
     <h1 style="margin:0 0 10px 0; color:#16263a;">Live Tamil News Translation</h1>
-    <p style="margin:0 0 5px 0; color:#555;">Sourced from News18 & OneIndia</p>
+    <p style="margin:0 0 5px 0; color:#555;">Today's News | Auto-Clears at Midnight</p>
     <p style="margin:0; font-size:0.85rem; color:#888;">Updated: {datetime.now().strftime("%d %b %Y, %I:%M %p")}</p>
   </div>
 """
